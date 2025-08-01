@@ -3,8 +3,18 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(npm run lint)"
+      "Bash(npm run lint)",
+      "WebFetch(domain:supabase.com)"
     ],
-    "deny": []
+    "deny": [
+      "Bash(npx db push:*)",
+      "Bash(db push:*)",
+      "Bash(npm db push:*)",
+      "Bash(npm run db:push:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(prisma db push:*)",
+      "Bash(npm run db:push:*)",
+      "Bash(npm run db:push:*)"
+    ]
   }
 }
