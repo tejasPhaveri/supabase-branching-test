@@ -1,0 +1,32 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+
+      # Make the CLI use the direct connection for migrations
+      - run: echo "DATABASE_URL=${{ secrets.DIRECT_URL }}" >> $GITHUB_ENV
+
+      - name: Deploy migrations
+        run: npx prisma migrate deploy  # safe, idempotent
+
+      # Additional deployment steps can be added here
+      # Vercel deployment will use the pooler URL (DATABASE_URL) automatically
