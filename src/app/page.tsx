@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { EmailDashboard } from "~/app/_components/email-dashboard";
+import { EmailScheduler } from "~/app/_components/email-scheduler";
 import { LatestPost } from "~/app/_components/post";
 import { auth } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
@@ -61,7 +63,13 @@ export default async function Home() {
             </div>
           </div>
 
-          {session?.user && <LatestPost />}
+          {session?.user && (
+            <div className="flex w-full flex-col items-center gap-12">
+              <LatestPost />
+              <EmailScheduler />
+              <EmailDashboard />
+            </div>
+          )}
         </div>
       </main>
     </HydrateClient>
