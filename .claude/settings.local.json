@@ -4,7 +4,8 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npm run lint)",
-      "WebFetch(domain:supabase.com)"
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:docs.github.com)"
     ],
     "deny": [
       "Bash(npx db push:*)",
