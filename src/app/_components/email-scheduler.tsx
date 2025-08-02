@@ -28,6 +28,12 @@ export function EmailScheduler() {
     e.preventDefault();
     if (!scheduledFor || !recipientEmail || !subject || !content) return;
 
+    // Ensure scheduled time is in the future
+    const now = new Date();
+    if (scheduledFor.getTime() <= now.getTime()) {
+      return;
+    }
+
     scheduleEmail.mutate({
       recipientEmail,
       subject,
@@ -98,6 +104,8 @@ export function EmailScheduler() {
               showTimeSelect
               dateFormat="MMMM d, yyyy h:mm aa"
               minDate={new Date()}
+              minTime={new Date()}
+              maxTime={new Date(new Date().setHours(23, 59, 59, 999))}
               className="w-full rounded-lg bg-white/10 px-4 py-2 text-white placeholder-white/60 focus:bg-white/20 focus:outline-none"
               calendarClassName="bg-slate-800 border-slate-700"
               required
@@ -105,10 +113,14 @@ export function EmailScheduler() {
           </div>
         </div>
 
+        <div className="text-xs text-white/70">
+          Times are interpreted in your local timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+        </div>
+
         <button
           type="submit"
           className="rounded-lg bg-white/10 px-6 py-3 font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-          disabled={scheduleEmail.isPending || !scheduledFor || !recipientEmail || !subject || !content}
+          disabled={scheduleEmail.isPending || !scheduledFor || !recipientEmail || !subject || !content || (scheduledFor ? scheduledFor.getTime() <= Date.now() : true)}
         >
           {scheduleEmail.isPending ? "Scheduling..." : "Schedule Email"}
         </button>

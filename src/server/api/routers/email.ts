@@ -10,9 +10,11 @@ export const emailRouter = createTRPCRouter({
     .input(
       z.object({
         recipientEmail: z.string().email(),
-        subject: z.string().min(1),
-        content: z.string().min(1),
-        scheduledFor: z.date(),
+        subject: z.string().min(1).max(250),
+        content: z.string().min(1).max(10000),
+        scheduledFor: z.date().refine((d) => d.getTime() > Date.now(), {
+          message: "scheduledFor must be in the future",
+        }),
       })
     )
     .mutation(async ({ ctx, input }) => {

@@ -49,9 +49,11 @@ export const authConfig = {
           return null;
         }
 
+        const normalizedEmail = (credentials.email as string).trim().toLowerCase();
+
         const user = await db.user.findUnique({
           where: {
-            email: credentials.email as string
+            email: normalizedEmail
           }
         });
 
@@ -78,6 +80,11 @@ export const authConfig = {
   ],
   adapter: PrismaAdapter(db),
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      // Always send the user to the root page after successful sign in/out flows,
+      // and also when NextAuth tries to return to the sign-in UI.
+      return baseUrl;
+    },
     session: ({ session, user }) => ({
       ...session,
       user: {
