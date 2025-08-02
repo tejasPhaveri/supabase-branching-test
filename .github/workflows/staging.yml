@@ -1,34 +1,58 @@
-name: Deploy Staging
+name: Staging Migrations
 
 on:
   push:
-    branches:
-      - staging
+    branches: ["staging"]
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  migrate:
     runs-on: ubuntu-latest
-    
+
+    env:
+      # Configure these in GitHub repo: Settings > Secrets and variables > Actions
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      ALLOW_DESTRUCTIVE: ${{ secrets.ALLOW_DESTRUCTIVE }}
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm ci
 
-      # Make the CLI use the direct connection for migrations
-      - run: |
-          echo "DATABASE_URL=${{ secrets.DIRECT_URL }}" >> $GITHUB_ENV
-          echo "DIRECT_URL=${{ secrets.DIRECT_URL }}" >> $GITHUB_ENV
+      - name: Prisma generate
+        run: npx prisma generate
 
-      - name: Deploy migrations
-        run: npx prisma migrate deploy  # safe, idempotent
+      - name: Check migrations for destructive SQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Scanning prisma/migrations for destructive SQL..."
+          found=0
+          if grep -Eir --line-number --with-filename \
+            "(DROP[[:space:]]+TABLE|DROP[[:space:]]+COLUMN|TRUNCATE|ALTER[[:space:]]+TABLE[^;]*DROP|CASCADE;)" \
+            prisma/migrations/*/migration.sql; then
+            found=1
+          fi
 
-      # Additional deployment steps can be added here
-      # Vercel deployment will use the pooler URL (DATABASE_URL) automatically
+          if [ "$found" -eq 1 ]; then
+            if [ "${ALLOW_DESTRUCTIVE:-}" != "true" ]; then
+              echo "Destructive SQL detected. Blocked. Set ALLOW_DESTRUCTIVE=true (with review) to proceed."
+              exit 1
+            else
+              echo "Destructive SQL detected but ALLOW_DESTRUCTIVE=true — proceeding as approved."
+            fi
+          else
+            echo "No destructive SQL detected."
+          fi
+
+      - name: Apply Prisma migrations (deploy)
+        run: npx prisma migrate deploy
