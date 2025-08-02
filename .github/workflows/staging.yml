@@ -10,10 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Configure these in GitHub repo: Settings > Secrets and variables > Actions
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DIRECT_URL: ${{ secrets.DIRECT_URL }}
-      ALLOW_DESTRUCTIVE: ${{ secrets.ALLOW_DESTRUCTIVE }}
+      # Supabase CLI environment variables for staging
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.STAGING_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+      
+      # Prisma database URLs for staging
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+      ALLOW_DESTRUCTIVE: ${{ secrets.STAGING_ALLOW_DESTRUCTIVE }}
 
     steps:
       - name: Checkout
@@ -28,6 +33,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to Supabase Staging Project
+        run: |
+          echo "Linking to staging Supabase project..."
+          supabase link --project-ref $SUPABASE_PROJECT_ID
+
       - name: Prisma generate
         run: npx prisma generate
 
@@ -35,24 +50,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Scanning prisma/migrations for destructive SQL..."
+          echo "Scanning prisma/migrations for destructive DDL (drops/truncate only)..."
+          # Combine patterns that truly remove schema or purge data.
+          # - DROP TABLE
+          # - DROP COLUMN
+          # - DROP CONSTRAINT
+          # - ALTER TABLE ... DROP ...
+          # - TRUNCATE
+          # - Optional CASCADE only when paired with a DROP/ALTER DROP (not FK ON DELETE/UPDATE CASCADE)
+          pattern_drop='\\bDROP[[:space:]]+TABLE\\b|\\bDROP[[:space:]]+COLUMN\\b|\\bDROP[[:space:]]+CONSTRAINT\\b|\\bTRUNCATE\\b|\\bALTER[[:space:]]+TABLE[^;]*\\bDROP\\b'
+          pattern_drop_with_cascade='(DROP[[:space:]]+TABLE|DROP[[:space:]]+CONSTRAINT|ALTER[[:space:]]+TABLE[^;]*DROP)[^;]*\\bCASCADE\\b'
+          
           found=0
-          if grep -Eir --line-number --with-filename \
-            "(DROP[[:space:]]+TABLE|DROP[[:space:]]+COLUMN|TRUNCATE|ALTER[[:space:]]+TABLE[^;]*DROP|CASCADE;)" \
-            prisma/migrations/*/migration.sql; then
+          # Flag lines that match any destructive pattern
+          if grep -Eirn --with-filename "${pattern_drop}" prisma/migrations/*/migration.sql; then
+            found=1
+          fi
+          # Explicitly also catch DROP ... CASCADE forms
+          if grep -Eirn --with-filename "${pattern_drop_with_cascade}" prisma/migrations/*/migration.sql; then
             found=1
           fi
 
           if [ "$found" -eq 1 ]; then
             if [ "${ALLOW_DESTRUCTIVE:-}" != "true" ]; then
-              echo "Destructive SQL detected. Blocked. Set ALLOW_DESTRUCTIVE=true (with review) to proceed."
+              echo "Destructive DDL detected (DROP/TRUNCATE/ALTER ... DROP). Blocked. Set ALLOW_DESTRUCTIVE=true (after review) to proceed."
               exit 1
             else
-              echo "Destructive SQL detected but ALLOW_DESTRUCTIVE=true — proceeding as approved."
+              echo "Destructive DDL detected but ALLOW_DESTRUCTIVE=true — proceeding as approved."
             fi
           else
-            echo "No destructive SQL detected."
+            echo "No destructive DDL detected."
           fi
+
+      - name: Deploy Supabase migrations
+        run: |
+          echo "🚀 Deploying Supabase migrations to STAGING..."
+          supabase db push --include-all
 
       - name: Apply Prisma migrations (deploy)
         run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        run: |
+          echo "✅ Verifying Supabase migration status..."
+          supabase migration list
+          echo "✅ Verifying Prisma migration status..."
+          npx prisma migrate status
