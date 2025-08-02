@@ -43,7 +43,7 @@ jobs:
       - name: Link to Supabase Production Project
         run: |
           echo "Linking to production Supabase project..."
-          supabase link --project-ref $SUPABASE_PROJECT_ID
+          supabase link --project-ref "${{ env.SUPABASE_PROJECT_ID }}" --password "${{ env.SUPABASE_DB_PASSWORD }}"
 
       - name: Prisma generate
         run: npx prisma generate

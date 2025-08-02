@@ -9,6 +9,8 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
 
+    environment: preview
+
     env:
       # Supabase CLI environment variables for staging
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -41,7 +43,7 @@ jobs:
       - name: Link to Supabase Staging Project
         run: |
           echo "Linking to staging Supabase project..."
-          supabase link --project-ref $SUPABASE_PROJECT_ID
+          supabase link --project-ref "${{ env.SUPABASE_PROJECT_ID }}" --password "${{ env.SUPABASE_DB_PASSWORD }}"
 
       - name: Prisma generate
         run: npx prisma generate
