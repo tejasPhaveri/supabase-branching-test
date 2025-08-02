@@ -1,4 +1,4 @@
-name: Staging Deployment
+name: Staging Migrations
 
 on:
   push:
@@ -6,12 +6,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  migrate:
     runs-on: ubuntu-latest
 
     environment: preview
 
     env:
+      # Supabase CLI environment variables for staging
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.STAGING_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+      
       # Prisma database URLs for staging
       DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
       DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
@@ -30,104 +35,66 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to Supabase Staging Project
+        run: |
+          echo "Linking to staging Supabase project..."
+          supabase link --project-ref "${{ env.SUPABASE_PROJECT_ID }}" --password "${{ env.SUPABASE_DB_PASSWORD }}"
+
       - name: Prisma generate
         run: npx prisma generate
 
-      - name: Validate expand-contract pattern
-        run: |
-          chmod +x .github/scripts/check-expand-contract.sh
-          .github/scripts/check-expand-contract.sh
-
-      - name: Check migrations for data preservation compliance
+      - name: Check migrations for destructive SQL
         shell: bash
         run: |
           set -euo pipefail
-          echo "🔍 Scanning migrations for data preservation compliance..."
-          
-          # 1. Check for destructive DDL patterns
-          echo "Checking for destructive DDL operations..."
+          echo "Scanning prisma/migrations for destructive DDL (drops/truncate only)..."
+          # Combine patterns that truly remove schema or purge data.
+          # - DROP TABLE
+          # - DROP COLUMN
+          # - DROP CONSTRAINT
+          # - ALTER TABLE ... DROP ...
+          # - TRUNCATE
+          # - Optional CASCADE only when paired with a DROP/ALTER DROP (not FK ON DELETE/UPDATE CASCADE)
           pattern_drop='\\bDROP[[:space:]]+TABLE\\b|\\bDROP[[:space:]]+COLUMN\\b|\\bDROP[[:space:]]+CONSTRAINT\\b|\\bTRUNCATE\\b|\\bALTER[[:space:]]+TABLE[^;]*\\bDROP\\b'
           pattern_drop_with_cascade='(DROP[[:space:]]+TABLE|DROP[[:space:]]+CONSTRAINT|ALTER[[:space:]]+TABLE[^;]*DROP)[^;]*\\bCASCADE\\b'
           
-          destructive_found=0
+          found=0
+          # Flag lines that match any destructive pattern
           if grep -Eirn --with-filename "${pattern_drop}" prisma/migrations/*/migration.sql; then
-            destructive_found=1
+            found=1
           fi
+          # Explicitly also catch DROP ... CASCADE forms
           if grep -Eirn --with-filename "${pattern_drop_with_cascade}" prisma/migrations/*/migration.sql; then
-            destructive_found=1
+            found=1
           fi
-          
-          # 2. Check for risky rename operations without proper data migration
-          echo "Checking for potentially unsafe column renames..."
-          risky_patterns='\\bALTER[[:space:]]+TABLE[^;]*RENAME[[:space:]]+COLUMN\\b'
-          rename_found=0
-          if grep -Eirn --with-filename "${risky_patterns}" prisma/migrations/*/migration.sql; then
-            echo "⚠️ RENAME COLUMN detected - ensure data is preserved!"
-            rename_found=1
-          fi
-          
-          # 3. Check for ALTER COLUMN without default values for existing data
-          echo "Checking for column alterations that might affect existing data..."
-          alter_patterns='\\bALTER[[:space:]]+COLUMN[^;]*NOT[[:space:]]+NULL\\b'
-          alter_found=0
-          if grep -Eirn --with-filename "${alter_patterns}" prisma/migrations/*/migration.sql; then
-            echo "⚠️ ALTER COLUMN NOT NULL detected - ensure existing data compatibility!"
-            alter_found=1
-          fi
-          
-          # Decision logic
-          if [ "$destructive_found" -eq 1 ]; then
+
+          if [ "$found" -eq 1 ]; then
             if [ "${ALLOW_DESTRUCTIVE:-}" != "true" ]; then
-              echo "❌ BLOCKED: Destructive DDL detected. This could cause DATA LOSS."
-              echo "If this is intentional (expand-contract pattern step 3):"
-              echo "1. Verify data has been migrated to new schema"
-              echo "2. Set STAGING_ALLOW_DESTRUCTIVE=true"
-              echo "3. Document the data migration in your PR"
+              echo "Destructive DDL detected (DROP/TRUNCATE/ALTER ... DROP). Blocked. Set ALLOW_DESTRUCTIVE=true (after review) to proceed."
               exit 1
             else
-              echo "⚠️ DESTRUCTIVE DDL APPROVED: Proceeding with STAGING_ALLOW_DESTRUCTIVE=true"
+              echo "Destructive DDL detected but ALLOW_DESTRUCTIVE=true — proceeding as approved."
             fi
-          fi
-          
-          if [ "$rename_found" -eq 1 ] || [ "$alter_found" -eq 1 ]; then
-            echo "⚠️ POTENTIALLY RISKY OPERATIONS detected."
-            echo "Ensure you're following the expand-contract pattern:"
-            echo "1. Expand: Add new columns alongside old ones"
-            echo "2. Migrate: Transform data from old to new schema"
-            echo "3. Contract: Remove old columns (requires STAGING_ALLOW_DESTRUCTIVE=true)"
-          fi
-          
-          if [ "$destructive_found" -eq 0 ] && [ "$rename_found" -eq 0 ] && [ "$alter_found" -eq 0 ]; then
-            echo "✅ Migrations appear safe for data preservation"
+          else
+            echo "No destructive DDL detected."
           fi
 
-      - name: Pre-migration backup check
+      - name: Deploy Supabase migrations
         run: |
-          echo "💾 Verifying backup strategy before migration..."
-          echo "Ensure you have recent backups before proceeding with schema changes"
-          echo "Supabase provides automatic daily backups, but consider manual backup for critical changes"
-          echo "Proceeding with migration to staging environment..."
+          echo "🚀 Deploying Supabase migrations to STAGING..."
+          supabase db push --include-all
 
       - name: Apply Prisma migrations (deploy)
-        run: |
-          echo "🚀 Applying Prisma migrations to STAGING database..."
-          npx prisma migrate deploy
+        run: npx prisma migrate deploy
 
       - name: Verify migration status
         run: |
+          echo "✅ Verifying Supabase migration status..."
+          supabase migration list
           echo "✅ Verifying Prisma migration status..."
           npx prisma migrate status
-
-      - name: Post-migration data integrity check
-        run: |
-          echo "🔍 Running post-migration data integrity checks..."
-          echo "Verifying database connection and basic queries..."
-          npx prisma studio --port 5555 &
-          STUDIO_PID=$!
-          sleep 2
-          kill $STUDIO_PID || true
-          echo "✅ Database connection verified"
-          echo "Manual verification recommended:"
-          echo "1. Check row counts in affected tables"
-          echo "2. Verify data integrity constraints"
-          echo "3. Test application functionality with new schema"

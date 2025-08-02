@@ -12,9 +12,15 @@ jobs:
     environment: production
 
     env:
+      # Supabase CLI environment variables for production
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.PRODUCTION_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
+      
       # Prisma database URLs for production
       DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
       DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
+      ALLOW_DESTRUCTIVE: ${{ secrets.PRODUCTION_ALLOW_DESTRUCTIVE }}
 
     steps:
       - name: Checkout
@@ -29,19 +35,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to Supabase Production Project
+        run: |
+          echo "Linking to production Supabase project..."
+          supabase link --project-ref "${{ env.SUPABASE_PROJECT_ID }}" --password "${{ env.SUPABASE_DB_PASSWORD }}"
+
       - name: Prisma generate
         run: npx prisma generate
 
-      - name: Check Prisma migration status
+      - name: Check production migration status
         run: |
-          echo "📊 Checking current Prisma migration status in production..."
+          echo "📊 Checking current migration status in production..."
+          echo "Supabase migrations:"
+          supabase migration list
+          echo ""
+          echo "Prisma migrations:"
           npx prisma migrate status
 
       - name: Verify staging deployment success
         run: |
-          echo "✅ PRODUCTION DEPLOYMENT: Applying Prisma migrations that were successfully tested in staging"
+          echo "✅ PRODUCTION DEPLOYMENT: Applying migrations that were successfully tested in staging"
           echo "These migrations have already passed safety checks and been validated in the staging environment"
           echo "Proceeding with production deployment..."
+
+      - name: Deploy Supabase migrations
+        run: |
+          echo "🚀 Deploying Supabase migrations to PRODUCTION..."
+          supabase db push --include-all
 
       - name: Apply Prisma migrations (deploy)
         run: |
@@ -50,5 +75,7 @@ jobs:
 
       - name: Verify migration status
         run: |
+          echo "✅ Verifying final Supabase migration status..."
+          supabase migration list
           echo "✅ Verifying final Prisma migration status..."
           npx prisma migrate status
